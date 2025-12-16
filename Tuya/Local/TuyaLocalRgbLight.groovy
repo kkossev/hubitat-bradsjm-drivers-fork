@@ -19,6 +19,8 @@
  *  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
  *  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  *  SOFTWARE.
+ * 
+ *  version 3.0.0 2025-12-16 kkossev  (dev.branch) added some of JTP mods; added colorTempDps; exceptions fixes
 */
 
 import com.hubitat.app.DeviceWrapper
@@ -87,7 +89,35 @@ preferences {
               type: 'number',
               required: true,
               range: '1..255',
-              defaultValue: '1'
+              defaultValue: '20'	// was 1
+
+        input name: 'modeDps',
+              title: 'Mode DPS',
+              type: 'number',
+              required: true,
+              range: '1..255',
+              defaultValue: '21'
+
+        input name: 'levelDps',
+              title: 'Level DPS',
+              type: 'number',
+              required: true,
+              range: '1..255',
+              defaultValue: '22'
+
+        input name: 'colorTempDps',
+              title: 'Color Temperature DPS',
+              type: 'number',
+              required: true,
+              range: '1..255',
+              defaultValue: '23'
+
+        input name: 'colorDps',
+              title: 'Color DPS',
+              type: 'number',
+              required: true,
+              range: '1..255',
+              defaultValue: '24'
 
         input name: 'repeat',
               title: 'Command Retries',
@@ -107,7 +137,7 @@ preferences {
               title: 'Heartbeat interval (sec)',
               type: 'number',
               required: true,
-              range: '0..60',
+              range: '0..180',	// was 60
               defaultValue: '20'
 
         input name: 'fxCount',
@@ -305,26 +335,38 @@ void setColor(Map colorMap) {
 
     Map functions = getFunctions(device)
     String code = getFunctionByCode(functions, tuyaFunctions.colour)
-    Map color = functions[code] ?: defaults[code]
+    //log.trace "code=${code} functions=${functions} defaults=${defaults}"
+    Map color = functions[code]
+    if (!color?.h || !color?.s || !color?.v) {
+        color = defaults[code]
+    }
     Map bright = functions['bright_value'] ?: functions['bright_value_v2'] ?: color.v
+    //log.trace "bright=${bright}"
     int h = remap(colorMap.hue, 0, 100, color.h.min, color.h.max)
-    int s = remap(colorMap.saturation, 0, 100, color.s.min, color.s.max)
+    int s = remap(colorMap.saturation, 0, 100, color.s.min, /*color.s.max*/1000)
     int v = remap(colorMap.level, 0, 100, bright.min, bright.max)
     def (int r, int g, int b) = ColorUtils.hsvToRGB([colorMap.hue, colorMap.saturation, colorMap.level])
     String colorName = translateColor(colorMap.hue as int, colorMap.saturation as int)
+    /*
     String rgb = Integer.toHexString(r).padLeft(2, '0') +
                  Integer.toHexString(g).padLeft(2, '0') +
                  Integer.toHexString(b).padLeft(2, '0')
     String hsv = Integer.toHexString(h).padLeft(4, '0') +
                  Integer.toHexString(s).padLeft(2, '0') +
                  Integer.toHexString(v).padLeft(2, '0')
-
-    if (repeatCommand([ '5': rgb + hsv, '2': 'colour' ])) {
+    */
+    String rgb = ''
+    String hsv = Integer.toHexString(h).padLeft(4, '0') +
+                 Integer.toHexString(s).padLeft(4, '0') +
+                 Integer.toHexString(v).padLeft(4, '0')
+    //log.trace "r=${r} g=${g} b=${b} rgb=${rgb} h=${h} s=${s} v=${v} hsv=${hsv} colorName=${colorName}"
+    if (repeatCommand([(settings.colorDps.toString()): rgb + hsv, (settings.modeDps.toString()): 'colour' ])) {
         sendEvent([ name: 'hue', value: colorMap.hue, descriptionText: "hue is ${colorMap.hue}" ])
         sendEvent([ name: 'saturation', value: colorMap.saturation, descriptionText: "saturation is ${colorMap.saturation}" ])
         sendEvent([ name: 'level', value: colorMap.level, unit: '%', descriptionText: "level is ${colorMap.level}%" ])
         sendEvent([ name: 'colorName', value: colorName, descriptionText: "color name is ${colorName}" ])
         sendEvent([ name: 'colorMode', value: 'RGB', descriptionText: 'color mode is RGB' ])
+        sendEvent([ name: 'effectName', value: 'none' ])
     } else {
         parent?.componentSetColor(device, colorMap)
     }
@@ -354,7 +396,7 @@ void setColorTemperature(BigDecimal kelvin, BigDecimal level = null, BigDecimal 
     Map temp = functions[code] ?: defaults[code]
     Integer value = temp.max - Math.ceil(remap(1000000 / kelvin, minMireds, maxMireds, temp.min, temp.max))
 
-    if (repeatCommand([ '4': value ])) {
+    if (repeatCommand([ (settings.colorTempDps.toString()): value ])) {
         sendEvent([ name: 'colorTemperature', value: kelvin, unit: 'K', descriptionText: "color temperature is ${kelvin}K" ])
         sendEvent([ name: 'colorMode', value: 'CT', descriptionText: 'color mode is CT' ])
     } else {
@@ -369,16 +411,20 @@ void setColorTemperature(BigDecimal kelvin, BigDecimal level = null, BigDecimal 
 
 void setEffect(BigDecimal effect) {
     LOG.info "setting effect to ${effect}"
-    String value = "scene${effect}"
-    if (repeatCommand([ 2: value ])) {
+    String value = (fxCount==0 ? 'scene' : "scene${effect}")
+        String modeDps = settings.modeDps
+    if (repeatCommand([ (modeDps): value ])) {
         sendEvent( [ name: 'effectName', value: value, descriptionText: "scene is ${value}" ] )
+        sendEvent( [ name: 'colorMode', value: 'EFFECTS', descriptionText: "color mode is EFFECTS" ] )
+    } else {
+        parent?.componentSetEffect(device, value)
     }
 }
 
 void setNextEffect() {
     String effect = device.currentValue('effectName')
     if (effect) {
-        int value = effect[-1] as int
+        int value = effect[-1].isInteger() ? effect[-1] as int : 0
         if (value == settings.fxCount) { value = 0 }
         setEffect(value + 1)
     }
@@ -412,7 +458,8 @@ void setLevel(BigDecimal level, BigDecimal duration = 0) {
         String code = getFunctionByCode(functions, tuyaFunctions.brightness)
         Map bright = functions[code] ?: defaults[code]
         Integer value = Math.ceil(remap(level, 0, 100, bright.min, bright.max))
-        if (repeatCommand([ '3': value ])) {
+        //log.trace "value=${value} for level=${level} using code=${code} with bright=${bright} , settings.levelDps=${settings.levelDps} toString=${settings.levelDps.toString()}"
+        if (repeatCommand([ (settings.levelDps.toString()): value ])) {
             sendEvent([ name: 'level', value: level, unit: '%', descriptionText: "level is ${level}%" ])
         } else {
             parent?.componentSetLevel(device, level, duration)
@@ -456,7 +503,7 @@ void updated() {
     LOG.info "driver configuration updated"
     LOG.debug settings
     initialize()
-    if (logEnable) { runIn(1800, 'logsOff') }
+    if (logEnable) { runIn(7200, 'logsOff') }
 }
 
 /* groovylint-disable-next-line UnusedPrivateMethod */
@@ -532,68 +579,107 @@ private SynchronousQueue getQ() {
 }
 
 private void parseDeviceState(Map dps) {
+    String descText = ''
     LOG.debug "parsing dps ${dps}"
     Map functions = getFunctions(device)
 
     String colorMode = device.currentValue('colorMode')
     List<Map> events = []
 
-    if (dps.containsKey(powerDps as String)) {
-        String value = dps[powerDps as String] ? 'on' : 'off'
-        events << [ name: 'switch', value: value, descriptionText: "switch is ${value}" ]
+    if (dps.containsKey(settings.powerDps.toString())) {
+        String value = dps[(settings.powerDps.toString())] ? 'on' : 'off'
+        descText += "switch is ${value}"
+        events << [ name: 'switch', value: value, descriptionText: descText ]
+        LOG.info descText
     }
-
     // Determine if we are in RGB or CT mode either explicitly or implicitly
-    if (dps.containsKey('2') && dps['2'].startsWith('scene')) {
-        String effect = dps['2']
-        events << [ name: 'effectName', value: effect, descriptionText: "scene is ${effect}" ]
-    } else if (dps.containsKey('2')) {
-        colorMode = dps['2'] == 'colour' ? 'RGB' : 'CT'
-        events << [ name: 'colorMode', value: colorMode, descriptionText: "color mode is ${colorMode}" ]
-        events << [ name: 'effectName', value: '' ]
-    } else if (dps.containsKey('4')) {
+    if (dps.containsKey(settings.modeDps.toString()) && dps[settings.modeDps.toString()]?.startsWith('scene')) {
+        String effect = dps[(settings.modeDps.toString())]
+        colorMode = 'EFFECTS'
+        descText = "scene is ${effect}"
+        events << [ name: 'effectName', value: effect, descriptionText: descText ]
+        LOG.info descText
+        descText = "color mode is ${colorMode}"
+        events << [ name: 'colorMode', value: colorMode, descriptionText: descText ]
+        LOG.info descText
+    } else if (dps.containsKey(settings.modeDps.toString())) {
+        colorMode = dps[(settings.modeDps.toString())] == 'colour' ? 'RGB' : 'CT'
+        descText = "color mode is ${colorMode}"
+        events << [ name: 'colorMode', value: colorMode, descriptionText: descText ]
+        LOG.info descText
+        events << [ name: 'effectName', value: 'none' ]
+    } else if (dps.containsKey(settings.colorTempDps.toString())) {
         colorMode = 'CT'
-        events << [ name: 'colorMode', value: colorMode, descriptionText: "color mode is ${colorMode}" ]
-    } else if (dps.containsKey('5')) {
+        descText = "color mode is ${colorMode}"
+        events << [ name: 'colorMode', value: colorMode, descriptionText: descText ]
+        LOG.info descText
+    } else if (dps.containsKey(settings.colorDps.toString())) {
         colorMode = 'RGB'
-        events << [ name: 'colorMode', value: colorMode, descriptionText: "color mode is ${colorMode}" ]
+        descText = "color mode is ${colorMode}"
+        events << [ name: 'colorMode', value: colorMode, descriptionText: descText ]
+        LOG.info descText
     }
 
-    if (dps.containsKey('3') && colorMode == 'CT') {
+    if (dps.containsKey((settings.levelDps.toString())) && colorMode == 'CT') {
         Map code = functions[getFunctionByCode(functions, tuyaFunctions.brightness)]
-        Integer value = Math.floor(remap(dps['3'] as int, code.min, code.max, 0, 100))
-        events << [ name: 'level', value: value, unit: '%', descriptionText: "level is ${value}%" ]
+        Integer value = Math.floor(remap(dps[(settings.levelDps.toString())] as int, code.min, code.max, 0, 100))
+        descText = "level is ${value}%"
+        events << [ name: 'level', value: value, unit: '%', descriptionText: descText ]
+        LOG.info descText
     }
 
-    if (dps.containsKey('4')) {
+    if (dps.containsKey(settings.colorTempDps.toString()) && colorMode == 'CT') {
         Map code = functions[getFunctionByCode(functions, tuyaFunctions.temperature)]
-        Integer value = Math.floor(1000000 / remap(code.max - dps['4'] as int,
+        Integer value = Math.floor(1000000 / remap(code.max - dps[(settings.colorTempDps.toString())] as int,
                                    code.min, code.max, minMireds, maxMireds))
+        descText = "color temperature is ${value}K"
         events << [ name: 'colorTemperature', value: value, unit: 'K',
-                    descriptionText: "color temperature is ${value}K" ]
+                    descriptionText: descText ]
+        LOG.info descText
     }
-
-    if (dps.containsKey('5') && colorMode == 'RGB') {
-        String value = dps['5']
+    if (dps.containsKey(settings.colorDps.toString()) && colorMode == 'RGB') {
+        String value = dps[settings.colorDps.toString()]
         // first six characters are RGB values which we ignore and use HSV instead
-        Matcher match = value =~ /^.{6}([0-9a-f]{4})([0-9a-f]{2})([0-9a-f]{2})$/
+        //Matcher match = value =~ /^.{6}([0-9a-f]{4})([0-9a-f]{2})([0-9a-f]{2})$/
+        //DPS 24 format -- 24:00f403e801fe (0 0f4 0 3e8 0 1fe) == {"h":244,"s":1000,"v":510}]
+        Matcher match = value =~ /^([0-9a-f]{4})([0-9a-f]{4})([0-9a-f]{4})$/
         if (match.find()) {
-            Map code = functions[getFunctionByCode(functions, tuyaFunctions.colour)]
-            Map bright = functions[getFunctionByCode(functions, tuyaFunctions.brightness)]
+            //LOG.debug "functions: ${functions} -- codes: ${tuyaFunctions.brightness} -- ${getFunctionByCode(functions, tuyaFunctions.brightness)}"
+            String colourFunc = getFunctionByCode(functions, tuyaFunctions.colour)
+            String brightFunc = getFunctionByCode(functions, tuyaFunctions.brightness)
+            //log.trace "colourFunc=${colourFunc} brightFunc=${brightFunc}"
+            Map code = functions[colourFunc]
+            if (!code?.h || !code?.s || !code?.v) {
+                code = defaults[colourFunc]
+            }
+            Map bright = functions[brightFunc] ?: code.v
+            //log.trace "code=${code} bright=${bright}"
             int h = Integer.parseInt(match.group(1), 16)
             int s = Integer.parseInt(match.group(2), 16)
             int v = Integer.parseInt(match.group(3), 16)
-            Integer hue = Math.floor(remap(h, code.h.min, code.h.max, 0, 100))
-            Integer saturation = Math.floor(remap(s, code.s.min, code.s.max, 0, 100))
+            //log.trace "hsv = $h, $s, $v"
+            //log.trace "code=$code code.s=${code.s}"
+            Integer hue = Math.floor(remap(h, code.h?.min, code.h?.max, 0, 100))
+            //Integer saturation = Math.floor(remap(s, code.s?.min, code.s?.max, 0, 100))
+            Integer saturation = Math.floor(remap(s, code.s?.min, 1000 /*code.s?.max*/, 0, 100))
             Integer level = Math.floor(remap(v, bright.min, bright.max, 0, 100))
             String colorName = translateColor(hue, saturation)
-            events << [ name: 'hue', value: hue, descriptionText: "hue is ${hue}" ]
-            events << [ name: 'colorName', value: colorName, descriptionText: "color name is ${colorName}" ]
-            events << [ name: 'saturation', value: saturation, descriptionText: "saturation is ${saturation}" ]
-            events << [ name: 'level', value: level, unit: '%', descriptionText: "level is ${level}%" ]
+            descText = "hue is ${hue}"
+            events << [ name: 'hue', value: hue, descriptionText: descText ]
+            LOG.debug descText
+            descText = "color name is ${colorName}"
+            events << [ name: 'colorName', value: colorName, descriptionText: descText ]
+            LOG.debug descText
+            descText = "saturation is ${saturation}"
+            events << [ name: 'saturation', value: saturation, descriptionText: descText ]
+            LOG.debug descText
+            descText = "level is ${level}%"
+            events << [ name: 'level', value: level, unit: '%', descriptionText: descText ]
+            LOG.debug descText
         }
     }
 
+    LOG.debug "sending events: ${events}"
     events.each { e ->
         if (device.currentValue(e.name) != e.value) {
             if (e.descriptionText && txtEnable) { LOG.info "${e.descriptionText}" }
