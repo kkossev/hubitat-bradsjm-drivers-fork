@@ -20,7 +20,7 @@
  *  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  *  SOFTWARE.
  * 
- *  version 3.0.0 2025-12-16 kkossev  (dev.branch) added some of JTP mods; added colorTempDps; exceptions fixes
+ *  version 3.0.0 2025-12-16 kkossev  (dev.branch) added some of JTP mods; added colorTempDps; exceptions fixes.
 */
 
 import com.hubitat.app.DeviceWrapper
