@@ -65,7 +65,7 @@ import hubitat.scheduling.AsyncResponse
  *  01/18/23 - 0.3.6 - Fix error in scene triggering
  *  01/24/23 - 0.3.7 - Support fan_speed_percent level
  *  10/23/24 - 0.3.8 - Update tuya auth request
- *  12/15/24 - 0.4.0 - adding HealthStatus capability and device health monitoring (kkossev)
+ *  12/18/25 - 0.4.0 - (kkossev) added 'fan_switch' command to tuyaFunctions.fanSwitch; 
  *
  *  Custom component drivers located at https://github.com/bradsjm/hubitat-drivers/tree/master/Component
  */
@@ -160,7 +160,7 @@ metadata {
         'cruiseSwitch'   : ['cruise_switch'],
         'decibelSwitch'  : ['decibel_switch'],
         'fanSpeed'       : ['fan_speed_enum', 'fan_speed'],
-        'fanSwitch'      : ['switch_fan', 'switch'],
+        'fanSwitch'      : ['switch_fan', 'switch', 'fan_switch'],
         'floodLight'     : ['floodlight_switch'],
         'motionTracking' : ['motion_tracking'],
         'motionSensitivity': ['motion_sensitivity'],
